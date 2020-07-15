@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+use libsystemd::daemon::{self, NotifyState};
 use std::convert::TryInto;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -70,11 +72,9 @@ fn get_free_swap_perc() -> u8 {
 
 fn create_swapfile(allocated: &mut u8) {
     //if check_ENOSPC(swapfc_path)
-    sd_notify::notify(
+    daemon::notify(
         true,
-        &[sd_notify::NotifyState::Status(String::from(
-            "Allocating swap file...",
-        ))],
+        &[NotifyState::Status("Allocating swap file...".to_string())],
     )
     .expect("Unable to notify systemd");
     *allocated += 1;
@@ -87,11 +87,11 @@ fn create_swapfile(allocated: &mut u8) {
         .arg(Path::new(SWAPFC_PATH).join(allocated.to_string()))
         .output()
         .expect("Unable to swapon");
-    sd_notify::notify(
+    daemon::notify(
         true,
-        &[sd_notify::NotifyState::Status(String::from(
-            "Monitoring memory status...",
-        ))],
+        &[NotifyState::Status(
+            "Monitoring memory status...".to_string(),
+        )],
     )
     .expect("Unable to notify systemd");
 }
@@ -116,11 +116,9 @@ fn prepare_swapfile(file: u8) -> io::Result<()> {
 }
 
 fn destroy_swapfile(allocated: &mut u8) -> io::Result<()> {
-    sd_notify::notify(
+    daemon::notify(
         true,
-        &[sd_notify::NotifyState::Status(String::from(
-            "Deallocating swap file...",
-        ))],
+        &[NotifyState::Status("Deallocating swap file...".to_string())],
     )
     .expect("Unable to notify systemd");
     Command::new("/usr/bin/swapoff")
@@ -129,11 +127,11 @@ fn destroy_swapfile(allocated: &mut u8) -> io::Result<()> {
         .expect("Unable to swapoff");
     fs::remove_file(allocated.to_string()).expect("Unable to remove file");
     *allocated -= 1;
-    sd_notify::notify(
+    daemon::notify(
         true,
-        &[sd_notify::NotifyState::Status(String::from(
-            "Monitoring memory status...",
-        ))],
+        &[NotifyState::Status(
+            "Monitoring memory status...".to_string(),
+        )],
     )
     .expect("Unable to notify systemd");
     Ok(())

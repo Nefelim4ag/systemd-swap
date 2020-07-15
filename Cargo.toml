@@ -1,14 +1,16 @@
 [package]
 name = "systemd-swap"
-version = "4.97.0"
+version = "0.1.0"
 authors = ["Vilgot Fredenberg <vilgot@fredenberg.xyz>"]
 edition = "2018"
+repository = "https://github.com/Nefelim4ag/systemd-swap/"
+license = "GPL-3.0-or-later"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sysinfo = "^0.14.0"
-sd-notify = "^0.1.0"
+sysinfo = "0.14.13"
+libsystemd = "0.2.1"
 
 [profile.release]
 lto = true
