@@ -66,10 +66,21 @@ get_mem_stat(){
 
 get_fs_type(){
   if [[ -d $1 ]]; then path=$1;
-  elif [[ -d $(dirname "$1") ]]; then path=$(dirname "$1");
+  elif [[ -d "${1%/*}" ]]; then path=${1%/*};
   else ERRO "swapfc_path is invalid"
   fi
-  df "$path" --output=fstype | tail -n 1
+
+  fstype=$(df "$path" --output=fstype | tail -n 1)
+
+  if [[ "$fstype" == "-" ]]; then
+    if btrfs subvolume show "$path" &>/dev/null; then
+      fstype=btrfs
+    else
+      ERRO "swapfc_path is located on an unknown filesystem"
+    fi
+  fi
+
+  echo $fstype
 }
 AMI_ROOT(){ [ "${UID}" == "0" ] || ERRO "Script must be run as root!"; }
 FIND_SWAP_UNITS(){ find /run/systemd/{system/,generator/} -type f -name "*.swap"; }
@@ -136,7 +147,9 @@ gen_swap_unit(){
     [[ ${What} =~ loop ]] && Type="File"
   fi
 
-  UNIT_NAME=$(systemd-escape -p "${What}")
+  UNIT_NAME="${What/\/}"
+  UNIT_NAME="${UNIT_NAME//-/\\x2d}"
+  UNIT_NAME="${UNIT_NAME//\//-}"
   UNIT_PATH="${RUN_SYSD}/system/${UNIT_NAME}.swap"
   {
     echo '[Unit]'
@@ -192,7 +205,7 @@ case $1 in
           [[ -f ${conf} ]] && WARN "Permission denied reading: ${conf}"
           continue
         fi
-        a_conf[$(basename "${conf}")]="${conf}"
+        a_conf[${conf##*/}]="${conf}"
         DEBUG "found ${conf}"
       done
       DEBUG "Selected configuration artifacts: ${a_conf[*]}"
@@ -222,7 +235,7 @@ case $1 in
       mkdir -p "${WORK_DIR}/zswap"
       for file in "${ZSWAP_M_P}"/*; do
         read -r VAL < "${file}"
-        write_l "${VAL}" "${WORK_DIR}/zswap/$(basename "${file}")"
+        write_l "${VAL}" "${WORK_DIR}/zswap/${file##*/}"
       done
       INFO "Zswap: backup current configuration: complete"
       INFO "Zswap: set new parameters: start"
@@ -289,7 +302,7 @@ case $1 in
       FIND_SWAP_UNITS | while read -r UNIT_PATH; do
         if grep -q systemd-gpt-auto-generator "${UNIT_PATH}"; then
           DEV=$(GET_WHAT_FROM_SWAP_UNIT "${UNIT_PATH}")
-          UNIT_NAME=$(basename "${UNIT_PATH}")
+          UNIT_NAME=${UNIT_PATH##*/}
           swapoff "${DEV}"
           rm -vf "${UNIT_PATH}"
         fi
@@ -358,9 +371,12 @@ case $1 in
 
         FSTYPE=$(get_fs_type "${swapfc_path}")
         # must exists before stat()
-        mkdir -p "$(dirname "${swapfc_path}")"
-        [[ $FSTYPE == btrfs ]] && { btrfs subvolume create "${swapfc_path}" \
-          || mkdir -p "${swapfc_path}"; }
+        mkdir -p "${swapfc_path%/*}"
+        if [[ $FSTYPE == btrfs ]]; then
+          btrfs subvolume create "$swapfc_path" &>/dev/null
+        else
+          mkdir -p "$swapfc_path" 
+        fi
 
         CHUNK_SIZE=$(to_bytes "${swapfc_chunk_size}")
         BLOCK_SIZE=$(stat -f -c %s "${swapfc_path}")
@@ -387,20 +403,10 @@ case $1 in
           touch "${file}" && chmod 0600 "${file}"
 
           [[ $FSTYPE == btrfs ]] && YN "${swapfc_nocow}" && chattr +C "${file}"
-          if [[ $FSTYPE == ext4 || $FSTYPE == ext3 || $FSTYPE == xfs || $FSTYPE == f2fs ]]; then
-            dd if=/dev/zero of="$file" conv=fdatasync status=none bs=1M count=$(( chunk_size / 1048576))
-          else
-            if YN ${swapfc_force_preallocated}; then
-              # ext2/3 does not support fallocate
-              fallocate -l "${chunk_size}" "${file}" \
-              || truncate -s "${chunk_size}" "${file}"
-            else
-              truncate -s "${chunk_size}" "${file}"
-            fi
-          fi
+          dd if=/dev/zero of="$file" conv=fdatasync status=none bs=1M count=$(( chunk_size / 1048576))
 
           losetup_w(){
-            file="$1"
+            local -r file="$1"
             if YN "${swapfc_directio}"; then
               losetup -f --show --direct-io=on  "${file}"
             else
@@ -429,7 +435,7 @@ case $1 in
             double_polling_rate
             systemd-notify "STATUS=Not enough space for allocating chunk"
             return
-          fi
+          fi  
 
           # in case we have adjusted the polling rate, reset it
           reset_polling_rate
@@ -456,13 +462,11 @@ case $1 in
           FIND_SWAP_UNITS | while read -r UNIT_PATH; do
             if grep -q "swapfc_${allocated}" "${UNIT_PATH}"; then
               DEV=$(GET_WHAT_FROM_SWAP_UNIT "${UNIT_PATH}")
-              UNIT_NAME=$(basename "${UNIT_PATH}")
+              UNIT_NAME=${UNIT_PATH##*/}
               systemctl stop "${UNIT_NAME}" || swapoff "${DEV}"
               rm -vf "${UNIT_PATH}"
               [[ -f ${DEV} ]] && rm -f "${DEV}"
             fi
-            (( allocated <= 2 )) || (( allocated <= swapfc_min_count )) && continue
-            (( curr_free_swap_perc > swapfc_remove_free_swap_perc )) && destroy_swapfile
           done
           (( --allocated ))
           systemd-notify "STATUS=Monitoring memory status..."
@@ -482,12 +486,13 @@ case $1 in
           if (( allocated == 0 )); then
             curr_free_ram_perc=$(get_free_ram_perc)
             (( curr_free_ram_perc < swapfc_free_ram_perc )) && create_swapfile \
-            "swapFC: free ram: ${curr_free_ram_perc} < ${swapfc_free_ram_perc} - allocate chunk: "
+            "swapFC: free ram: $curr_free_ram_perc < $swapfc_free_ram_perc - allocate chunk: "
             continue
           fi
           curr_free_swap_perc=$(get_free_swap_perc)
           if (( curr_free_swap_perc < swapfc_free_swap_perc )) && (( allocated < swapfc_max_count )); then
-            create_swapfile "swapFC: free swap: ${curr_free_swap_perc} < ${swapfc_free_swap_perc} - allocate chunk: "
+            create_swapfile "swapFC: free swap: $curr_free_swap_perc < $swapfc_free_swap_perc - allocate chunk: "
+            continue
           fi
           (( allocated <= 2 )) || (( allocated <= swapfc_min_count )) && continue
           (( curr_free_swap_perc > swapfc_remove_free_swap_perc )) && destroy_swapfile
@@ -498,10 +503,11 @@ case $1 in
   stop)
     [[ ! -f "${LOCK_STARTED}" ]] && INFO_E "$0 already stopped"
     systemd-notify "STOPPING=1"
-    FIND_SWAP_UNITS | while read -r UNIT_PATH; do
+    readonly swap_units=$(FIND_SWAP_UNITS)
+    echo "$swap_units" | while read -r UNIT_PATH; do
       if grep -q swapd "${UNIT_PATH}"; then
         DEV=$(GET_WHAT_FROM_SWAP_UNIT "${UNIT_PATH}")
-        UNIT_NAME=$(basename "${UNIT_PATH}")
+        UNIT_NAME=${UNIT_PATH##*/}
         swapoff "${DEV}"
         rm -vf "${UNIT_PATH}"
       fi
@@ -509,20 +515,20 @@ case $1 in
 
     [[ -f ${WORK_DIR}/swapfc/.lock ]] && rm -f "${WORK_DIR}/swapfc/.lock"
 
-    FIND_SWAP_UNITS | while read -r UNIT_PATH; do
+    echo "$swap_units" | while read -r UNIT_PATH; do
       if grep -q swapfc "${UNIT_PATH}"; then
         DEV=$(GET_WHAT_FROM_SWAP_UNIT "${UNIT_PATH}")
-        UNIT_NAME=$(basename "${UNIT_PATH}")
+        UNIT_NAME=${UNIT_PATH##*/}
         swapoff "${DEV}"
         rm -vf "${UNIT_PATH}"
         [[ -f ${DEV} ]] && rm -f "${DEV}"
       fi
     done
 
-    FIND_SWAP_UNITS | while read -r UNIT_PATH; do
+    echo "$swap_units" | while read -r UNIT_PATH; do
       if grep -q zram "${UNIT_PATH}"; then
         DEV=$(GET_WHAT_FROM_SWAP_UNIT "${UNIT_PATH}")
-        UNIT_NAME=$(basename "${UNIT_PATH}")
+        UNIT_NAME=${UNIT_PATH##*/}
         INFO "Zram: swapoff ${DEV}"
         swapoff "${DEV}"
         rm -vf "${UNIT_PATH}"
@@ -534,7 +540,7 @@ case $1 in
     if [[ -d ${WORK_DIR}/zswap ]]; then
       INFO "Zswap: restore configuration: start"
       for file in "${WORK_DIR}/zswap"/*; do
-        read_l "${file}" > "${ZSWAP_M_P}/$(basename "${file}")"
+        read_l "${file}" > "${ZSWAP_M_P}/${file##*/}"
       done
       INFO "Zswap: restore configuration: complete"
     fi
@@ -559,7 +565,7 @@ case $1 in
       (( STORED_PAGES > 0 )) && RATIO=$(( USED_PAGES * 100 / STORED_PAGES ))
       {
         grep . /sys/module/zswap/parameters/* | \
-          cut -d'/' -f 6 | \
+          cut -d'/' -f6 | \
           sed -e 's/:/ /g' -e 's/^/. /g'
       } | column -t
       {
@@ -570,9 +576,6 @@ case $1 in
         (( SWAP_USED > 0 )) && \
           echo . . zswap_store/swap_store ${STORED_BYTES}/${SWAP_USED} $(( STORED_BYTES * 100 / SWAP_USED ))%
       } | column -t
-
-    else
-      WARN "Zswap unavailable"
     fi
 
     if zramctl | grep -q '\[SWAP\]'; then
@@ -586,7 +589,7 @@ case $1 in
 
     if [[ -d ${WORK_DIR}/swapd ]]; then
       echo swapD:
-      swapon --raw --show TYPE | \
+      swapon --raw | \
         grep -v 'zram\|file\|loop' | \
         sed 's/^/.\t/g' | \
         column -t
@@ -594,7 +597,7 @@ case $1 in
 
     if [[ -d ${WORK_DIR}/swapfc ]]; then
       echo swapFC:
-      swapon --raw --show TYPE | \
+      swapon --raw | \
         grep -e 'NAME\|file\|loop' | \
         sed 's/^/.\t/g' | \
         column -t
@@ -606,3 +609,4 @@ case $1 in
 esac
 
 exit 0
+# vim: set ft=sh ts=2 sw=2 et:

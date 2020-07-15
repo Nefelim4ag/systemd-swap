@@ -1,4 +1,4 @@
-systemd-swap_*_any*
+systemd-swap[_-]*
 swap.conf
 *.new
 
