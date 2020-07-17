@@ -9,8 +9,9 @@ license = "GPL-3.0-or-later"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sysinfo = "0.14.13"
-libsystemd = "0.2.1"
+sysinfo = "*"
+libsystemd = "*"
+config = "*"
 
 [profile.release]
 lto = true

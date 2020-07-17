@@ -29,42 +29,22 @@ sudo systemctl enable --now systemd-swap
 
 ## Install
 
-- <img src="https://www.monitorix.org/imgs/archlinux.png" weight="16" height="16"> **Arch**: in the [community](https://www.archlinux.org/packages/community/any/systemd-swap/).
+- <img src="https://www.monitorix.org/imgs/archlinux.png" weight="16" height="16"> **Arch Linux**: in the [community](https://www.archlinux.org/packages/community/any/systemd-swap/) repo.
 
-- <img src="https://www.monitorix.org/imgs/debian.png" weight="16" height="16"> **Debian**
-
-  ```shell
-  git clone --depth=1 https://github.com/Nefelim4ag/systemd-swap.git
-  cd systemd-swap
-  make deb
-  sudo dpkg -i systemd-swap_*_all.deb
-  ```
-
-- <img src="https://www.monitorix.org/imgs/fedora.png" weight="16" height="16"> **Fedora**
+- <img src="https://www.monitorix.org/imgs/debian.png" weight="16" height="16"> **Debian based distros**
 
   ```shell
   git clone --depth=1 https://github.com/Nefelim4ag/systemd-swap.git
   cd systemd-swap
-  FEDORA_VERSION=f32 make rpm
-  sudo rpm -U systemd-swap-*noarch.rpm
+  cargo install cargo-deb
+  cargo deb --install
   ```
 
-- <img src="https://www.monitorix.org/imgs/centos.png" weight="16" height="16"> **CentOS**
+- <img src="https://www.monitorix.org/imgs/fedora.png" weight="16" height="16"> **Fedora based distros**
 
   ```shell
-  git clone --depth=1 https://github.com/Nefelim4ag/systemd-swap.git
-  ./systemd-swap/package.sh centos
-  sudo rpm -U ./systemd-swap/systemd-swap-*noarch.rpm
-  ```
-
-- **Manual**
-
-  ```shell
-  git clone --depth=1 https://github.com/Nefelim4ag/systemd-swap.git
-  sudo make install
-
-  # or into /usr/local:
-  sudo make prefix=/usr/local install
+  dnf copr enable zeno/systemd-swap
+  dnf install systemd-swap
   ```
 
 ## About configuration
@@ -92,15 +72,13 @@ sudo systemctl enable --now systemd-swap
 
 ## Switch on systemd-swap:s automatic swap management
 
-- Enable swapfc if wanted (note, you should **never** use zram and zswap at the same time, read more [here](https://www.google.com))
+- Enable swapfc if wanted (note, you should **never** use zram and zswap at the same time)
 
   ```shell
-  vim /etc/systemd/swap.conf
+  vim /etc/systemd/swap.conf.d/overrides.conf
   ```
 
   ```ini
-  zram_enabled=0
-  zswap_enabled=1
   swapfc_enabled=1
   ```
 
